@@ -1,0 +1,22 @@
+{
+  "name": "lovefeast",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "db:setup": "node scripts/setup-db.js",
+    "db:seed": "node scripts/seed.js",
+    "db:reset-demo": "node scripts/reset-demo.js",
+    "build": "node --check server.js && node --check app.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "latest",
+    "@aws-sdk/s3-request-presigner": "latest",
+    "@neondatabase/serverless": "latest",
+    "dotenv": "latest",
+    "express": "latest"
+  }
+}
