@@ -48,3 +48,4 @@ The Express API is in `server.js`. Postgres schema and setup scripts are in `sch
 The S3-compatible Neon Object Storage bucket is checked at `/api/storage/health`. The app does not currently need file uploads, so storage is wired as a health-checked service and is ready for an event banner or logo upload later.
 
 No WhatsApp, SMS, or email API calls are made.
+# lovefest
