@@ -149,4 +149,6 @@ app.get('/api/storage/health', async (_req, res) => {
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
 app.use((_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
-app.listen(port, () => console.log(`Love Feast running at http://localhost:${port}`));
+if (!process.env.VERCEL) app.listen(port, () => console.log(`Love Feast running at http://localhost:${port}`));
+
+export default app;
