@@ -8,13 +8,14 @@ import { neon } from '@neondatabase/serverless';
 import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.join(__dirname, 'public');
 const app = express();
 const sql = neon(process.env.DATABASE_URL);
 const exchangeId = process.env.EXCHANGE_ID || '00000000-0000-4000-8000-000000000001';
 const port = Number(process.env.PORT || 4173);
 
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(__dirname));
+app.use(express.static(publicDir));
 
 function normalizePhone(value) {
   let phone = String(value || '').replace(/[\s().-]/g, '');
@@ -147,7 +148,7 @@ app.get('/api/storage/health', async (_req, res) => {
 });
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
-app.use((_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.use((_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
 if (!process.env.VERCEL) app.listen(port, () => console.log(`Love Feast running at http://localhost:${port}`));
 
