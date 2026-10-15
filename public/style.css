@@ -155,7 +155,7 @@ code { font-family: ui-monospace, monospace; font-size: 11px; background: #f1f5e
   .stats .stat:last-child { grid-column: span 2; }
   .dashboard-head { display: block; margin-top: 40px; }
   .dashboard-head .actions { margin-top: 18px; }
-  .nav-actions .button.secondary { display: none; }
+  .nav-actions .button { padding: 10px 14px; font-size: 12px; }
   .settings-grid { grid-template-columns: 1fr; }
   .full { grid-column: auto; }
   .inline-form { grid-template-columns: 1fr; }
