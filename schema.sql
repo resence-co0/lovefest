@@ -48,9 +48,31 @@ CREATE TABLE IF NOT EXISTS reveal_tokens (
   exchange_id UUID NOT NULL REFERENCES exchanges(id) ON DELETE CASCADE,
   participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
   token_hash TEXT NOT NULL UNIQUE,
+  token_ciphertext TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ,
   viewed_at TIMESTAMPTZ,
   revoked_at TIMESTAMPTZ
+);
+
+ALTER TABLE reveal_tokens ADD COLUMN IF NOT EXISTS token_ciphertext TEXT;
+ALTER TABLE reveal_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS organizer_sessions (
+  id UUID PRIMARY KEY,
+  exchange_id UUID NOT NULL REFERENCES exchanges(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS organizer_login_attempts (
+  id UUID PRIMARY KEY,
+  ip_hash TEXT NOT NULL,
+  attempted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  succeeded BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -64,3 +86,5 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS eligible_members_exchange_idx ON eligible_members(exchange_id);
 CREATE INDEX IF NOT EXISTS participants_exchange_idx ON participants(exchange_id);
 CREATE INDEX IF NOT EXISTS reveal_tokens_hash_idx ON reveal_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS organizer_sessions_token_idx ON organizer_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS organizer_login_attempts_ip_idx ON organizer_login_attempts(ip_hash, attempted_at DESC);
