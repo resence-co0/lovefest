@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS reveal_tokens (
 
 ALTER TABLE reveal_tokens ADD COLUMN IF NOT EXISTS token_ciphertext TEXT;
 ALTER TABLE reveal_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE participants ADD COLUMN IF NOT EXISTS gift_hint TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS organizer_sessions (
   id UUID PRIMARY KEY,

@@ -12,7 +12,15 @@
 </head>
 <body>
   <div class="grain"></div>
-  <main id="app"></main>
+  <main id="app">
+    <div class="app-loading" role="status">
+      <span class="brand-mark loading-mark" aria-hidden="true">✦</span>
+      <p>Opening the Love Feast…</p>
+      <p class="tiny loading-slow">Still connecting. This can take a moment on mobile data.</p>
+    </div>
+    <noscript><p class="app-loading">Please turn on JavaScript to use Love Feast.</p></noscript>
+  </main>
+  <div id="toast" class="toast-region" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>
 </html>
