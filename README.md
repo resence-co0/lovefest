@@ -28,8 +28,8 @@ Open http://localhost:4173. The organizer workspace is available at http://local
 
 ## Demo flow
 
-1. Sign in to **Organizer** and review the eligible roster.
-2. From **Participant view**, register three fictional members. Nigerian phone formats are normalized server-side. Members can leave an optional gift hint (up to 280 characters), which only their Secret Santa sees on the reveal.
+1. Sign in to **Organizer**. Optionally add pre-approved numbers: anyone who registers with one is approved automatically.
+2. From **Participant view**, register three members. Anyone can register; numbers that aren't pre-approved wait under **Waiting for your approval** until the organizer approves or declines them, and the draw can't run while anyone is still waiting. Nigerian phone formats are normalized server-side. Members can leave an optional gift hint (up to 280 characters), which only their Secret Santa sees on the reveal.
 3. Return to **Organizer**, close registration, and run the draw.
 4. Send each private reveal link with its **WhatsApp** button (or copy it) and open it in another browser tab. Links can be recovered after a refresh, revoked, or replaced without changing the assignment.
 5. If someone drops out, remove them from the participant list. Before the draw they simply leave the list. After the draw, the person who was buying for them takes over their recipient, so only that one giver's match changes; their existing link shows the new match and is marked unopened again.
@@ -46,7 +46,7 @@ npm run db:reset-demo
 
 ## Backend
 
-The Express API is in `server.js`. Postgres schema and setup scripts are in `schema.sql` and `scripts/`. The API enforces roster eligibility, commitment acceptance, duplicate prevention, cutoff status, transactional one-time draw creation, encrypted recoverable reveal tokens, expiry, revocation, and participant-specific reveals, and participant removal that repairs the gift ring. The organizer uses an eight-hour HttpOnly server session. Assignment pairs are never returned by organizer-state endpoints, although the organizer can open any participant's private link.
+The Express API is in `server.js`. Postgres schema and setup scripts are in `schema.sql` and `scripts/`. The API enforces organizer approval of non-roster registrations, commitment acceptance, duplicate prevention, cutoff status, transactional one-time draw creation, encrypted recoverable reveal tokens, expiry, revocation, and participant-specific reveals, and participant removal that repairs the gift ring. The organizer uses an eight-hour HttpOnly server session. Assignment pairs are never returned by organizer-state endpoints, although the organizer can open any participant's private link.
 
 Private tokens stay in the URL fragment, so they are not sent in ordinary page requests or referrer headers. The browser submits a token to the reveal API only when the participant opens the link.
 

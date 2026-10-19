@@ -38,6 +38,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '100kb' }));
+app.use((req, _res, next) => { req.body ??= {}; next(); });
 app.use(express.static(publicDir));
 
 function normalizePhone(value) {
@@ -62,9 +63,9 @@ function sameOriginOnly(req, res, next) {
   if (!origin) return next();
   const forwardedHost = req.get('x-forwarded-host') || req.get('host');
   try {
-    if (new URL(origin).host !== forwardedHost) return res.status(403).json({ error: 'Request origin is not allowed.' });
+    if (new URL(origin).host !== forwardedHost) return res.status(403).json({ error: 'This request came from another website and was blocked. Please use the Love Feast site directly.' });
   } catch {
-    return res.status(403).json({ error: 'Request origin is not allowed.' });
+    return res.status(403).json({ error: 'This request came from another website and was blocked. Please use the Love Feast site directly.' });
   }
   next();
 }
@@ -77,14 +78,14 @@ async function findOrganizerSession(req) {
 }
 
 async function adminOnly(req, res, next) {
-  if (!cookieValue(req, sessionCookie)) return res.status(401).json({ error: 'Organizer sign-in required.' });
+  if (!cookieValue(req, sessionCookie)) return res.status(401).json({ error: 'Please sign in as the organizer to continue.' });
   try {
     const session = await findOrganizerSession(req);
     if (!session) return res.status(401).json({ error: 'Your organizer session has expired. Please sign in again.' });
     req.organizerSessionId = session.id;
     next();
   } catch {
-    res.status(500).json({ error: 'Unable to verify organizer access.' });
+    res.status(500).json({ error: 'We couldn’t check your organizer sign-in. Please try again in a moment.' });
   }
 }
 
@@ -99,7 +100,7 @@ async function auditWithClient(client, action, metadata = {}) {
 function requireLinkSecret(res) {
   const secret = process.env.LINK_ENCRYPTION_SECRET;
   if (!secret || secret.length < 32) {
-    res.status(503).json({ error: 'Private-link encryption is not configured.' });
+    res.status(503).json({ error: 'Private links aren’t set up on this server yet. Set LINK_ENCRYPTION_SECRET in the deployment settings.' });
     return null;
   }
   return secret;
@@ -108,10 +109,10 @@ function requireLinkSecret(res) {
 app.get('/api/event', async (_req, res) => {
   try {
     const [event] = await sql`SELECT ${eventColumns} FROM exchanges WHERE id = ${exchangeId}`;
-    if (!event) return res.status(404).json({ error: 'Event not found.' });
+    if (!event) return res.status(404).json({ error: 'This exchange couldn’t be found. Please contact the organizer.' });
     res.json(event);
   } catch {
-    res.status(500).json({ error: 'Unable to load the event.' });
+    res.status(500).json({ error: 'We couldn’t load the exchange details. Please try again in a moment.' });
   }
 });
 
@@ -119,7 +120,7 @@ app.post('/api/admin/login', sameOriginOnly, async (req, res) => {
   const configuredPassword = process.env.ORGANIZER_PASSWORD;
   const candidate = String(req.body.password || '');
   if (!configuredPassword || !process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
-    return res.status(503).json({ error: 'Organizer authentication is not configured.' });
+    return res.status(503).json({ error: 'Organizer sign-in isn’t set up on this server yet. Set ORGANIZER_PASSWORD and SESSION_SECRET in the deployment settings.' });
   }
   const ipHash = hashToken(`${process.env.SESSION_SECRET}:${req.ip || 'unknown'}`);
   try {
@@ -136,7 +137,7 @@ app.post('/api/admin/login', sameOriginOnly, async (req, res) => {
     setSessionCookie(res, token);
     res.json({ authenticated: true });
   } catch {
-    res.status(500).json({ error: 'Unable to sign in right now.' });
+    res.status(500).json({ error: 'We couldn’t sign you in right now. Please try again in a moment.' });
   }
 });
 
@@ -146,7 +147,7 @@ app.post('/api/admin/logout', sameOriginOnly, adminOnly, async (req, res) => {
     setSessionCookie(res, '', 0);
     res.status(204).end();
   } catch {
-    res.status(500).json({ error: 'Unable to sign out.' });
+    res.status(500).json({ error: 'We couldn’t sign you out. Please try again in a moment.' });
   }
 });
 
@@ -162,7 +163,7 @@ app.get('/api/admin/state', async (_req, res) => {
   try {
     const [event] = await sql`SELECT ${eventColumns} FROM exchanges WHERE id = ${exchangeId}`;
     const roster = await sql`SELECT id, normalized_phone, display_name, EXISTS (SELECT 1 FROM participants p WHERE p.eligible_member_id = eligible_members.id) AS registered FROM eligible_members WHERE exchange_id = ${exchangeId} ORDER BY display_name`;
-    const participants = await sql`SELECT id, display_name, normalized_phone, gift_hint, commitment_accepted_at, registered_at FROM participants WHERE exchange_id = ${exchangeId} ORDER BY registered_at`;
+    const participants = await sql`SELECT id, display_name, normalized_phone, gift_hint, status, commitment_accepted_at, registered_at FROM participants WHERE exchange_id = ${exchangeId} ORDER BY registered_at`;
     const storedLinks = event?.is_drawn ? await sql`
       SELECT p.id AS participant_id, p.display_name AS participant_name, p.normalized_phone, t.id AS token_id, t.token_ciphertext, t.viewed_at, t.expires_at
       FROM participants p
@@ -184,35 +185,36 @@ app.get('/api/admin/state', async (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ event, roster, participants, links });
   } catch {
-    res.status(500).json({ error: 'Unable to load organizer state.' });
+    res.status(500).json({ error: 'We couldn’t load the organizer workspace. Please try again in a moment.' });
   }
 });
 
 app.patch('/api/admin/event', async (req, res) => {
   const { title, fellowship, description, guidance, cutoffDate, exchangeDate } = req.body;
-  if (!title || !fellowship || !cutoffDate || !exchangeDate) return res.status(400).json({ error: 'Title, fellowship, cutoff and exchange date are required.' });
+  if (!title || !fellowship || !cutoffDate || !exchangeDate) return res.status(400).json({ error: 'Please fill in the event title, fellowship name, registration cutoff and Love Feast date.' });
   // The organizer form sends wall-clock Lagos time (datetime-local has no offset).
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(cutoffDate) || !/^\d{4}-\d{2}-\d{2}$/.test(exchangeDate)) return res.status(400).json({ error: 'Enter a valid cutoff time and Love Feast date.' });
+  if (cutoffDate.slice(0, 10) > exchangeDate) return res.status(400).json({ error: 'The registration cutoff must be on or before the Love Feast date.' });
   try {
     const [event] = await sql`UPDATE exchanges SET title = ${title.trim()}, fellowship = ${fellowship.trim()}, description = ${String(description || '').trim()}, guidance = ${String(guidance || '').trim()}, cutoff_at = (${cutoffDate}::timestamp AT TIME ZONE ${eventTimeZone}), exchange_at = ${exchangeDate}, updated_at = now() WHERE id = ${exchangeId} RETURNING ${eventColumns}`;
     await audit('event_updated');
     res.json(event);
   } catch {
-    res.status(500).json({ error: 'Unable to update event.' });
+    res.status(500).json({ error: 'We couldn’t save the event details. Please try again in a moment.' });
   }
 });
 
 app.post('/api/admin/roster', async (req, res) => {
   const phone = normalizePhone(req.body.phone);
   const name = String(req.body.name || 'Unnamed member').trim();
-  if (!/^\+234[789]\d{9}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid Nigerian phone number.' });
+  if (!/^\+234[789]\d{9}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid Nigerian mobile number, for example 0803 000 0001.' });
   try {
     const [member] = await sql`INSERT INTO eligible_members (id, exchange_id, normalized_phone, display_name) VALUES (${crypto.randomUUID()}, ${exchangeId}, ${phone}, ${name}) ON CONFLICT (exchange_id, normalized_phone) DO NOTHING RETURNING id, normalized_phone, display_name`;
     if (!member) return res.status(409).json({ error: 'That number is already on the roster.' });
     await audit('roster_member_added');
     res.status(201).json(member);
   } catch {
-    res.status(500).json({ error: 'Unable to add roster member.' });
+    res.status(500).json({ error: 'We couldn’t add that member. Please try again in a moment.' });
   }
 });
 
@@ -225,7 +227,7 @@ app.post('/api/admin/roster/import', async (req, res) => {
       const phone = normalizePhone(row.phone);
       const name = String(row.name || 'Unnamed member').trim();
       if (!/^\+234[789]\d{9}$/.test(phone)) {
-        invalid.push({ phone: row.phone, reason: 'Invalid Nigerian number' });
+        invalid.push({ phone: String(row.phone || '').trim(), reason: 'Not a valid Nigerian mobile number' });
         continue;
       }
       const [member] = await sql`INSERT INTO eligible_members (id, exchange_id, normalized_phone, display_name) VALUES (${crypto.randomUUID()}, ${exchangeId}, ${phone}, ${name}) ON CONFLICT (exchange_id, normalized_phone) DO NOTHING RETURNING id`;
@@ -234,40 +236,44 @@ app.post('/api/admin/roster/import', async (req, res) => {
     await audit('roster_imported', { added, invalid: invalid.length });
     res.json({ added, invalid });
   } catch {
-    res.status(500).json({ error: 'Unable to import the roster.' });
+    res.status(500).json({ error: 'We couldn’t finish the import. Members added before the problem were saved; run the import again to add the rest.' });
   }
 });
 
 app.delete('/api/admin/roster/:id', async (req, res) => {
   try {
     const [member] = await sql`DELETE FROM eligible_members WHERE id = ${req.params.id} AND exchange_id = ${exchangeId} AND NOT EXISTS (SELECT 1 FROM participants WHERE eligible_member_id = eligible_members.id) RETURNING id`;
-    if (!member) return res.status(409).json({ error: 'That member is registered or cannot be removed.' });
+    if (!member) {
+      const [existing] = await sql`SELECT display_name FROM eligible_members WHERE id = ${req.params.id} AND exchange_id = ${exchangeId}`;
+      if (!existing) return res.status(404).json({ error: 'That member is no longer on the roster. Refresh the page to see the latest list.' });
+      return res.status(409).json({ error: `${existing.display_name} has already registered. Remove them from the participant list first.` });
+    }
     await audit('roster_member_removed');
     res.status(204).end();
   } catch {
-    res.status(500).json({ error: 'Unable to remove roster member.' });
+    res.status(500).json({ error: 'We couldn’t remove that member. Please try again in a moment.' });
   }
 });
 
 app.post('/api/admin/close', async (_req, res) => {
   try {
     const [event] = await sql`UPDATE exchanges SET is_open = false, is_closed = true, updated_at = now() WHERE id = ${exchangeId} AND is_drawn = false RETURNING is_open, is_closed`;
-    if (!event) return res.status(409).json({ error: 'A completed draw cannot be changed.' });
+    if (!event) return res.status(409).json({ error: 'The draw has already been run, so registration can’t be changed.' });
     await audit('registration_closed');
     res.json(event);
   } catch {
-    res.status(500).json({ error: 'Unable to close registration.' });
+    res.status(500).json({ error: 'We couldn’t close registration. Please try again in a moment.' });
   }
 });
 
 app.post('/api/admin/reopen', async (_req, res) => {
   try {
     const [event] = await sql`UPDATE exchanges SET is_open = true, is_closed = false, updated_at = now() WHERE id = ${exchangeId} AND is_drawn = false RETURNING is_open, is_closed`;
-    if (!event) return res.status(409).json({ error: 'A completed draw cannot be reopened.' });
+    if (!event) return res.status(409).json({ error: 'The draw has already been run, so registration can’t be reopened.' });
     await audit('registration_reopened');
     res.json(event);
   } catch {
-    res.status(500).json({ error: 'Unable to reopen registration.' });
+    res.status(500).json({ error: 'We couldn’t reopen registration. Please try again in a moment.' });
   }
 });
 
@@ -275,22 +281,46 @@ app.post('/api/register', async (req, res) => {
   const phone = normalizePhone(req.body.phone);
   const name = String(req.body.name || '').trim().slice(0, 120);
   const giftHint = String(req.body.giftHint || '').trim().slice(0, 280);
-  if (!name || !req.body.commitmentAccepted || !/^\+234[789]\d{9}$/.test(phone)) return res.status(400).json({ error: 'We couldn’t complete that registration. Please check your details or contact the organizer.' });
+  if (!name) return res.status(400).json({ error: 'Please enter your name.' });
+  if (!/^\+234[789]\d{9}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid Nigerian WhatsApp number, for example 0803 000 0001.' });
+  if (!req.body.commitmentAccepted) return res.status(400).json({ error: 'Please tick the gift promise to confirm you’ll take part.' });
   try {
-    const [participant] = await sql`INSERT INTO participants (id, exchange_id, eligible_member_id, display_name, normalized_phone, gift_hint, commitment_accepted_at)
-      SELECT ${crypto.randomUUID()}, e.id, m.id, ${name}, m.normalized_phone, ${giftHint}, now() FROM exchanges e JOIN eligible_members m ON m.exchange_id = e.id AND m.normalized_phone = ${phone}
+    const [participant] = await sql`INSERT INTO participants (id, exchange_id, eligible_member_id, display_name, normalized_phone, gift_hint, status, commitment_accepted_at)
+      SELECT ${crypto.randomUUID()}, e.id, m.id, ${name}, ${phone}, ${giftHint}, CASE WHEN m.id IS NULL THEN 'pending' ELSE 'approved' END, now()
+      FROM exchanges e LEFT JOIN eligible_members m ON m.exchange_id = e.id AND m.normalized_phone = ${phone}
       WHERE e.id = ${exchangeId} AND e.is_open = true AND e.is_closed = false AND now() < e.cutoff_at
-      AND NOT EXISTS (SELECT 1 FROM participants p WHERE p.exchange_id = e.id AND p.normalized_phone = m.normalized_phone)
-      RETURNING id, display_name, registered_at`;
+      ON CONFLICT (exchange_id, normalized_phone) DO NOTHING
+      RETURNING id, display_name, status, registered_at`;
     if (!participant) {
       const [event] = await sql`SELECT is_open AND NOT is_closed AND now() < cutoff_at AS accepting FROM exchanges WHERE id = ${exchangeId}`;
       if (!event?.accepting) return res.status(409).json({ error: 'Registration for this exchange has closed. Please contact the organizer.' });
-      return res.status(400).json({ error: 'We couldn’t complete that registration. Please check your details or contact the organizer.' });
+      return res.status(409).json({ error: 'This number is already registered. If that wasn’t you, please contact the organizer.' });
     }
-    await audit('participant_registered');
+    await audit('participant_registered', { status: participant.status });
     res.status(201).json({ participant });
   } catch {
-    res.status(500).json({ error: 'Unable to complete registration.' });
+    res.status(500).json({ error: 'We couldn’t save your registration. Please try again in a moment.' });
+  }
+});
+
+app.post('/api/admin/participants/approve-all', async (_req, res) => {
+  try {
+    const approved = await sql`UPDATE participants SET status = 'approved' WHERE exchange_id = ${exchangeId} AND status = 'pending' AND NOT EXISTS (SELECT 1 FROM exchanges WHERE id = ${exchangeId} AND is_drawn) RETURNING id`;
+    if (approved.length) await audit('participants_approved', { count: approved.length });
+    res.json({ approved: approved.length });
+  } catch {
+    res.status(500).json({ error: 'We couldn’t approve those registrations. Please try again in a moment.' });
+  }
+});
+
+app.post('/api/admin/participants/:id/approve', async (req, res) => {
+  try {
+    const [participant] = await sql`UPDATE participants SET status = 'approved' WHERE id = ${req.params.id} AND exchange_id = ${exchangeId} AND status = 'pending' RETURNING display_name`;
+    if (!participant) return res.status(404).json({ error: 'That registration is no longer waiting for approval. Refresh the page to see the latest list.' });
+    await audit('participant_approved', { participantId: req.params.id });
+    res.json({ approved: participant.display_name });
+  } catch {
+    res.status(500).json({ error: 'We couldn’t approve that registration. Please try again in a moment.' });
   }
 });
 
@@ -302,7 +332,7 @@ app.delete('/api/admin/participants/:id', async (req, res) => {
     const participantResult = await client.query('SELECT id FROM participants WHERE id = $1 AND exchange_id = $2', [req.params.id, exchangeId]);
     if (!eventResult.rows[0] || !participantResult.rows[0]) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Participant not found.' });
+      return res.status(404).json({ error: 'That participant couldn’t be found. They may already have been removed; refresh the page.' });
     }
     if (!eventResult.rows[0].is_drawn) {
       await client.query('DELETE FROM participants WHERE id = $1', [req.params.id]);
@@ -326,7 +356,7 @@ app.delete('/api/admin/participants/:id', async (req, res) => {
     const ring = ringResult.rows[0];
     if (!ring) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'This participant’s assignment could not be found.' });
+      return res.status(409).json({ error: 'That participant’s gift match couldn’t be found, so nothing was changed. Refresh the page and try again.' });
     }
     await client.query('DELETE FROM participants WHERE id = $1', [req.params.id]);
     await client.query('INSERT INTO assignments (id, exchange_id, giver_participant_id, recipient_participant_id) VALUES ($1, $2, $3, $4)', [crypto.randomUUID(), exchangeId, ring.giver_id, ring.recipient_id]);
@@ -337,7 +367,7 @@ app.delete('/api/admin/participants/:id', async (req, res) => {
     res.json({ removed: true, affectedParticipant: ring.giver_name });
   } catch {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Unable to remove the participant. Nothing was changed.' });
+    res.status(500).json({ error: 'We couldn’t remove that participant, so nothing was changed. Please try again in a moment.' });
   } finally {
     client.release();
   }
@@ -353,12 +383,17 @@ app.post('/api/admin/draw', async (_req, res) => {
     const event = eventResult.rows[0];
     if (!event?.is_closed || event.is_drawn) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Registration must be closed and the draw must not already exist.' });
+      return res.status(409).json({ error: event?.is_drawn ? 'The draw has already been run. It can only happen once.' : 'Close registration before running the draw.' });
     }
-    const participantResult = await client.query('SELECT id, display_name FROM participants WHERE exchange_id = $1 ORDER BY registered_at FOR UPDATE', [exchangeId]);
+    const participantResult = await client.query('SELECT id, display_name, status FROM participants WHERE exchange_id = $1 ORDER BY registered_at FOR UPDATE', [exchangeId]);
+    const pending = participantResult.rows.filter(row => row.status !== 'approved').length;
+    if (pending) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `${pending} ${pending === 1 ? 'person is' : 'people are'} still waiting for approval. Approve or decline them before running the draw.` });
+    }
     if (participantResult.rows.length < 2) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'At least two participants are required.' });
+      return res.status(400).json({ error: 'At least two approved participants are needed before you can run the draw.' });
     }
 
     const assignments = createDraw(participantResult.rows);
@@ -377,7 +412,7 @@ app.post('/api/admin/draw', async (_req, res) => {
     res.json({ links });
   } catch {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Unable to complete the draw. No assignments were saved.' });
+    res.status(500).json({ error: 'The draw didn’t finish, so no assignments were saved. Please try again in a moment.' });
   } finally {
     client.release();
   }
@@ -396,7 +431,7 @@ app.post('/api/admin/reveal/:participantId/regenerate', async (req, res) => {
     const participant = participantResult.rows[0];
     if (!participant) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Participant assignment not found.' });
+      return res.status(404).json({ error: 'That participant doesn’t have a gift match yet. Refresh the page and try again.' });
     }
     await client.query('UPDATE reveal_tokens SET revoked_at = now() WHERE participant_id = $1 AND revoked_at IS NULL', [participant.id]);
     const rawToken = createOpaqueToken();
@@ -409,7 +444,7 @@ app.post('/api/admin/reveal/:participantId/regenerate', async (req, res) => {
     res.json({ participantId: participant.id, participantName: participant.display_name, tokenId, token: rawToken });
   } catch {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Unable to replace the private link.' });
+    res.status(500).json({ error: 'We couldn’t replace that private link. Please try again in a moment.' });
   } finally {
     client.release();
   }
@@ -423,14 +458,14 @@ app.post('/api/admin/reveal/:participantId/revoke', async (req, res) => {
       WHERE participant_id = $1 AND exchange_id = $2 AND revoked_at IS NULL RETURNING id`, [req.params.participantId, exchangeId]);
     if (!result.rowCount) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'No active private link was found.' });
+      return res.status(404).json({ error: 'That participant has no active link to revoke. Refresh the page to see the latest status.' });
     }
     await auditWithClient(client, 'reveal_link_revoked', { participantId: req.params.participantId });
     await client.query('COMMIT');
     res.status(204).end();
   } catch {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Unable to revoke the private link.' });
+    res.status(500).json({ error: 'We couldn’t revoke that private link. Please try again in a moment.' });
   } finally {
     client.release();
   }
@@ -438,9 +473,14 @@ app.post('/api/admin/reveal/:participantId/revoke', async (req, res) => {
 
 app.post('/api/reveal', sameOriginOnly, async (req, res) => {
   const rawToken = String(req.body.token || '');
-  if (!rawToken || rawToken.length > 100) return res.status(404).json({ error: 'This private reveal link is invalid or has expired.' });
+  const invalidLink = 'This link isn’t valid. Make sure you opened the full link from your WhatsApp message, or ask the organizer to resend it.';
+  if (!rawToken || rawToken.length > 100) return res.status(404).json({ error: invalidLink });
   try {
     const tokenHash = hashToken(rawToken);
+    const [link] = await sql`SELECT revoked_at IS NOT NULL AS revoked, expires_at IS NOT NULL AND expires_at <= now() AS expired FROM reveal_tokens WHERE token_hash = ${tokenHash}`;
+    if (!link) return res.status(404).json({ error: invalidLink });
+    if (link.revoked) return res.status(410).json({ error: 'This link was replaced or turned off by the organizer. Ask them to send you your current link.' });
+    if (link.expired) return res.status(410).json({ error: 'This link has expired because the Love Feast is over.' });
     const [result] = await sql`SELECT p.display_name AS participant_name, recipient.display_name AS recipient_name, recipient.gift_hint AS recipient_hint, e.guidance
       FROM reveal_tokens t
       JOIN participants p ON p.id = t.participant_id
@@ -448,13 +488,13 @@ app.post('/api/reveal', sameOriginOnly, async (req, res) => {
       JOIN participants recipient ON recipient.id = a.recipient_participant_id
       JOIN exchanges e ON e.id = t.exchange_id
       WHERE t.token_hash = ${tokenHash} AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > now())`;
-    if (!result) return res.status(404).json({ error: 'This private reveal link is invalid or has expired.' });
+    if (!result) return res.status(404).json({ error: 'We couldn’t find a gift match for this link. Please contact the organizer.' });
     const organizerPreview = Boolean(await findOrganizerSession(req));
     if (!organizerPreview) await sql`UPDATE reveal_tokens SET viewed_at = COALESCE(viewed_at, now()) WHERE token_hash = ${tokenHash}`;
     res.setHeader('Cache-Control', 'no-store');
     res.json({ ...result, organizerPreview });
   } catch {
-    res.status(500).json({ error: 'Unable to load this reveal.' });
+    res.status(500).json({ error: 'We couldn’t load your match. Please try again in a moment.' });
   }
 });
 
@@ -469,7 +509,14 @@ app.get('/api/storage/health', async (_req, res) => {
   }
 });
 
-app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
+app.use('/api', (_req, res) => res.status(404).json({ error: 'That page or action doesn’t exist.' }));
+// Anything uncaught (bad JSON, an oversized body, a lost database connection) still answers in plain words.
+app.use((error, _req, res, _next) => {
+  if (error.type === 'entity.parse.failed') return res.status(400).json({ error: 'The request couldn’t be read. Please refresh the page and try again.' });
+  if (error.type === 'entity.too.large') return res.status(413).json({ error: 'That’s too much text to send at once. Try importing the roster in smaller batches.' });
+  console.error(error);
+  res.status(500).json({ error: 'Something went wrong on our side. Please try again in a moment.' });
+});
 app.use((_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
 if (!process.env.VERCEL) app.listen(port, () => console.log(`Love Feast running at http://localhost:${port}`));

@@ -85,16 +85,24 @@ try {
   const afterDropout = await json(await adminFetch('/admin/state', cookie));
   assert(afterDropout.participants.length === 4 && afterDropout.roster.length === 5, 'Removing a participant before the draw should keep them on the roster.');
 
+  const newcomer = await json(await fetch(`${origin}/api/register`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ name: 'Walk-in Member', phone: '0803 999 9999', giftHint: 'Hint from Walk-in Member', commitmentAccepted: true }) }));
+  assert(newcomer.participant.status === 'pending', 'A number that is not pre-approved was not left pending.');
+  const duplicate = await fetch(`${origin}/api/register`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ name: 'Walk-in Again', phone: '08039999999', commitmentAccepted: true }) });
+  assert(duplicate.status === 409, 'The same number was allowed to register twice.');
+
   await json(await adminFetch('/admin/close', cookie, { method: 'POST' }));
+  const blockedDraw = await adminFetch('/admin/draw', cookie, { method: 'POST' });
+  assert(blockedDraw.status === 409, 'The draw ran while a registration was still waiting for approval.');
+  await json(await adminFetch(`/admin/participants/${newcomer.participant.id}/approve`, cookie, { method: 'POST' }));
   const closedRegistration = await fetch(`${origin}/api/register`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ name: 'Late Member', phone: dropout.normalized_phone, commitmentAccepted: true }) });
   assert(closedRegistration.status === 409, 'Registration after closing did not report that registration has closed.');
 
   const draw = await json(await adminFetch('/admin/draw', cookie, { method: 'POST' }));
-  assert(draw.links.length === 4, 'Draw did not create one link per participant.');
-  assert(new Set(draw.links.map(link => link.token)).size === 4, 'Reveal tokens are not unique.');
+  assert(draw.links.length === 5, 'Draw did not create one link per participant.');
+  assert(new Set(draw.links.map(link => link.token)).size === 5, 'Reveal tokens are not unique.');
 
   const refreshed = await json(await adminFetch('/admin/state', cookie));
-  assert(refreshed.links.length === 4 && refreshed.links.every(link => link.token), 'Encrypted reveal links were not recoverable after refresh.');
+  assert(refreshed.links.length === 5 && refreshed.links.every(link => link.token), 'Encrypted reveal links were not recoverable after refresh.');
 
   const preview = await json(await adminFetch('/reveal', cookie, { method: 'POST', body: JSON.stringify({ token: refreshed.links[1].token }) }));
   const afterPreview = await json(await adminFetch('/admin/state', cookie));
@@ -115,31 +123,32 @@ try {
   const giverOfLeaving = [...ringBefore].find(([, recipient]) => recipient === leaving)[0];
   const removal = await json(await adminFetch(`/admin/participants/${leaving}`, cookie, { method: 'DELETE' }));
   const ringAfter = await ring();
-  assert(removal.affectedParticipant && ringAfter.size === 3 && isSingleCycle(ringAfter), 'Removing a participant after the draw did not leave a valid ring.');
+  assert(removal.affectedParticipant && ringAfter.size === 4 && isSingleCycle(ringAfter), 'Removing a participant after the draw did not leave a valid ring.');
   assert(ringAfter.get(giverOfLeaving) === ringBefore.get(leaving), 'The removed participant’s giver was not given their recipient.');
   assert([...ringAfter].filter(([giver, recipient]) => ringBefore.get(giver) !== recipient).length === 1, 'More than one assignment changed after a removal.');
 
   const remaining = (await json(await adminFetch('/admin/state', cookie))).participants;
   await json(await adminFetch(`/admin/participants/${remaining[0].id}`, cookie, { method: 'DELETE' }));
-  const tooFew = await adminFetch(`/admin/participants/${remaining[1].id}`, cookie, { method: 'DELETE' });
+  await json(await adminFetch(`/admin/participants/${remaining[1].id}`, cookie, { method: 'DELETE' }));
+  const tooFew = await adminFetch(`/admin/participants/${remaining[2].id}`, cookie, { method: 'DELETE' });
   assert(tooFew.status === 409, 'Removal was allowed even though it would leave fewer than two participants.');
 
-  const first = refreshed.links.find(link => link.participantId !== leaving && link.participantId !== remaining[0].id);
+  const first = refreshed.links.find(link => link.participantId === remaining[2].id);
   const firstReveal = await json(await fetch(`${origin}/api/reveal`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ token: first.token }) }));
   assert(firstReveal.participant_name !== firstReveal.recipient_name, 'A participant was assigned to themselves.');
   assert(firstReveal.recipient_hint === `Hint from ${firstReveal.recipient_name}`, 'The reveal did not include the recipient’s gift hint.');
 
   const replacement = await json(await adminFetch(`/admin/reveal/${first.participantId}/regenerate`, cookie, { method: 'POST' }));
   const oldLink = await fetch(`${origin}/api/reveal`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ token: first.token }) });
-  assert(oldLink.status === 404, 'Replaced reveal link remained active.');
+  assert(oldLink.status === 410, 'Replaced reveal link remained active.');
   await json(await fetch(`${origin}/api/reveal`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ token: replacement.token }) }));
 
   const revoked = await adminFetch(`/admin/reveal/${first.participantId}/revoke`, cookie, { method: 'POST' });
   assert(revoked.status === 204, 'Reveal link revocation failed.');
   const revokedLink = await fetch(`${origin}/api/reveal`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ token: replacement.token }) });
-  assert(revokedLink.status === 404, 'Revoked reveal link remained active.');
+  assert(revokedLink.status === 410, 'Revoked reveal link remained active.');
 
-  console.log(JSON.stringify({ authenticated: true, assignments: draw.links.length, removalBeforeDraw: true, closedRegistrationMessage: true, organizerPreviewNotCounted: true, removalAfterDrawRepairsRing: true, linksRecovered: true, replacementInvalidatedOldLink: true, revocationEnforced: true }));
+  console.log(JSON.stringify({ authenticated: true, pendingApprovalEnforced: true, assignments: draw.links.length, removalBeforeDraw: true, closedRegistrationMessage: true, organizerPreviewNotCounted: true, removalAfterDrawRepairsRing: true, linksRecovered: true, replacementInvalidatedOldLink: true, revocationEnforced: true }));
 } finally {
   if (server && !server.killed) server.kill('SIGTERM');
   await pool.query('DELETE FROM exchanges WHERE id = $1', [exchangeId]);
