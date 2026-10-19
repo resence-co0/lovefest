@@ -21,6 +21,16 @@
     <noscript><p class="app-loading">Please turn on JavaScript to use Love Feast.</p></noscript>
   </main>
   <div id="toast" class="toast-region" aria-live="polite"></div>
+  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="confirm-body">
+      <h3 id="confirm-title"></h3>
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button type="button" id="confirm-cancel" class="button secondary">Cancel</button>
+        <button type="button" id="confirm-ok" class="button">Confirm</button>
+      </div>
+    </div>
+  </dialog>
   <script src="app.js"></script>
 </body>
 </html>
